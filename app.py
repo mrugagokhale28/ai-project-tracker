@@ -7,7 +7,7 @@ import plotly.express as px
 
 # --- PAGE SETUP ---
 st.set_page_config(page_title="Project Risk Tracking Assistant", page_icon="⚡", layout="wide")
-st.title("⚡ Project Risk Tracking Assistant")
+st.title("Project Risk Tracking Assistant")
 st.caption("Agentic workflow automation, dynamic database tracking, and executive risk analytics.")
 
 # --- DATABASE SETUP (SQLite) ---
