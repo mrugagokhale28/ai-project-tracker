@@ -50,7 +50,7 @@ if not api_key:
 if api_key:
     genai.configure(api_key=api_key)
     # Using lightweight high-throughput Gemini model
-    model = genai.GenerativeModel('gemini-2.0-flash-lite')
+    model = genai.GenerativeModel('gemini-3.5-flash-lite')
 
     # --- DATABASE FUNCTIONS ---
     def load_data():
