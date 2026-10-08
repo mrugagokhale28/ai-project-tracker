@@ -7,13 +7,12 @@ import plotly.express as px
 
 # --- PAGE SETUP ---
 st.set_page_config(page_title="Project Risk Tracking Assistant", page_icon="⚡", layout="wide")
-st.title("Project Risk Tracking Assistant")
-st.caption("Agentic workflow automation, dynamic database tracking, and visual analytics.")
+st.title("⚡ Project Risk Tracking Assistant")
+st.caption("Agentic workflow automation, dynamic database tracking, and executive risk analytics.")
 
 # --- DATABASE SETUP (SQLite) ---
 conn = sqlite3.connect('projects.db', check_same_thread=False)
 c = conn.cursor()
-# Creating a new table to cleanly handle the new column names
 c.execute('''
     CREATE TABLE IF NOT EXISTS risk_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -28,6 +27,21 @@ c.execute('''
 ''')
 conn.commit()
 
+# --- INITIAL SEED DATA (Populates automatically if empty) ---
+c.execute("SELECT COUNT(*) FROM risk_logs")
+if c.fetchone()[0] == 0:
+    seed_records = [
+        ("Payment Gateway", "Alex M.", "Awaiting production credentials for Stripe webhooks from Security.", "Blocked", 9, "Security credential approval", "Initial seed data"),
+        ("User Dashboard", "Mruga G.", "Completed dark mode UI and integrated user preferences screen.", "On Track", 1, "None", "Initial seed data"),
+        ("Mobile Data Sync", "Devin K.", "Database sync dropping packets due to iOS background execution timeouts.", "At Risk", 7, "iOS execution limits", "Initial seed data"),
+        ("Auth Service", "Sarah T.", "Refactoring OAuth2 login flow; waiting on Okta sandbox API availability.", "At Risk", 6, "Okta API downtime", "Initial seed data")
+    ]
+    c.executemany('''
+        INSERT INTO risk_logs (project_name, owner, risk_summary, status, risk_score, blockers, raw_update)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ''', seed_records)
+    conn.commit()
+
 # --- API KEY CONFIGURATION ---
 api_key = st.secrets.get("GEMINI_API_KEY") if "GEMINI_API_KEY" in st.secrets else None
 if not api_key:
@@ -35,11 +49,11 @@ if not api_key:
 
 if api_key:
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-3.8-flash')
+    # Using lightweight high-throughput Gemini model
+    model = genai.GenerativeModel('gemini-2.0-flash-lite')
 
     # --- DATABASE FUNCTIONS ---
     def load_data():
-        # Maps the SQL columns to your requested clean display names
         df = pd.read_sql_query("""
             SELECT 
                 id, 
@@ -61,7 +75,6 @@ if api_key:
         conn.commit()
 
     def update_db_record(record_id, display_column, new_value):
-        # Maps the display names back to SQL names when you edit a cell
         col_map = {
             'Project Name': 'project_name',
             'Owner': 'owner',
