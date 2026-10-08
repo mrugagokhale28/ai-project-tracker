@@ -6,7 +6,7 @@ import json
 # Page Configuration
 st.set_page_config(page_title="AI Project Health Tracker", page_icon="📊", layout="wide")
 
-st.title("📊 AI Project Health & Blocker Tracker")
+st.title("AI Project Health & Blocker Tracker")
 st.write("Automated project status parsing, risk scoring, and interactive Q&A assistant.")
 
 # Fetch key safely from Streamlit Cloud Secrets
@@ -17,7 +17,7 @@ if not api_key:
 
 if api_key:
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-2.5-flash')
 
     # Pre-populate demo data so Eddie sees results immediately
     if "tasks" not in st.session_state:
