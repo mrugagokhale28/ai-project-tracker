@@ -1,17 +1,34 @@
 import streamlit as st
 import google.generativeai as genai
 import pandas as pd
+import sqlite3
 import json
+import plotly.express as px
 
-# Page Configuration
-st.set_page_config(page_title="AI Project Health Tracker", page_icon="📊", layout="wide")
+# --- PAGE SETUP ---
+st.set_page_config(page_title="Enterprise AI Ops Lead", page_icon="⚡", layout="wide")
+st.title("⚡ Enterprise AI Project Health & Ops Lead")
+st.caption("Agentic workflow automation, dynamic database tracking, predictive risk mapping, and CRUD capabilities.")
 
-st.title("AI Project Health & Blocker Tracker")
-st.write("Automated project status parsing, risk scoring, and interactive Q&A assistant.")
+# --- DATABASE SETUP (SQLite) ---
+conn = sqlite3.connect('projects.db', check_same_thread=False)
+c = conn.cursor()
+c.execute('''
+    CREATE TABLE IF NOT EXISTS updates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project TEXT,
+        member TEXT,
+        summary TEXT,
+        status TEXT,
+        risk_score INTEGER,
+        blockers TEXT,
+        raw_update TEXT
+    )
+''')
+conn.commit()
 
-# Fetch key safely from Streamlit Cloud Secrets
+# --- API KEY CONFIGURATION ---
 api_key = st.secrets.get("GEMINI_API_KEY") if "GEMINI_API_KEY" in st.secrets else None
-
 if not api_key:
     api_key = st.sidebar.text_input("Enter Gemini API Key:", type="password")
 
@@ -19,114 +36,189 @@ if api_key:
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel('gemini-3.8-flash')
 
-    # Pre-populate demo data so Eddie sees results immediately
-    if "tasks" not in st.session_state:
-        st.session_state.tasks = [
-            {
-                "Project": "Payment Gateway Integration",
-                "Member": "Alex",
-                "Summary": "Stripe integration blocked due to missing webhook credentials.",
-                "Status": "Blocked",
-                "Risk Score": 9,
-                "Blockers": "Missing webhook secret keys from DevOps.",
-                "Raw Update": "Tried setting up Stripe webhooks today but blocked waiting on secrets."
-            },
-            {
-                "Project": "User Dashboard UI",
-                "Member": "Mruga",
-                "Summary": "Completed dark mode UI and user settings page.",
-                "Status": "On Track",
-                "Risk Score": 2,
-                "Blockers": "None",
-                "Raw Update": "Finished dark mode toggle and user profile settings screen."
-            },
-            {
-                "Project": "Mobile Data Sync",
-                "Member": "Devin",
-                "Summary": "Database sync dropping packets on iOS background tasks.",
-                "Status": "At Risk",
-                "Risk Score": 7,
-                "Blockers": "iOS background execution timeout limits.",
-                "Raw Update": "Background data sync failing on iOS test devices."
-            }
-        ]
+    # --- DATABASE FUNCTIONS ---
+    def load_data():
+        df = pd.read_sql_query("SELECT id, project, member, status, risk_score, blockers, summary FROM updates ORDER BY id DESC", conn)
+        # Add a UI column for the Delete Checkbox
+        df.insert(0, "❌ Delete", False)
+        return df
 
-    # Sidebar: Add New Updates
-    st.sidebar.header("➕ Add Project Update")
-    project_name = st.sidebar.text_input("Project Name")
-    developer_name = st.sidebar.text_input("Team Member Name")
-    update_text = st.sidebar.text_area("Daily Status Update / Raw Work Log")
+    def add_data(project, member, summary, status, risk_score, blockers, raw):
+        c.execute('''
+            INSERT INTO updates (project, member, summary, status, risk_score, blockers, raw_update)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (project, member, summary, status, risk_score, blockers, raw))
+        conn.commit()
 
-    if st.sidebar.button("Analyze & Log Update"):
-        if update_text and project_name:
+    def update_db_record(record_id, column, new_value):
+        c.execute(f"UPDATE updates SET {column} = ? WHERE id = ?", (new_value, record_id))
+        conn.commit()
+
+    def delete_db_record(record_id):
+        c.execute("DELETE FROM updates WHERE id = ?", (record_id,))
+        conn.commit()
+
+    # Load current data
+    df = load_data()
+    existing_projects = df['project'].unique().tolist() if not df.empty else []
+    existing_members = df['member'].unique().tolist() if not df.empty else []
+
+    # --- SIDEBAR: SINGLE UPDATE ---
+    st.sidebar.header("➕ Add Single Update")
+    project_options = existing_projects + ["➕ Add New Project..."]
+    selected_project = st.sidebar.selectbox("Select Project", project_options)
+    project_name = st.sidebar.text_input("Enter New Project Name") if selected_project == "➕ Add New Project..." else selected_project
+
+    member_options = existing_members + ["➕ Add New Member..."]
+    selected_member = st.sidebar.selectbox("Select Team Member", member_options)
+    developer_name = st.sidebar.text_input("Enter New Member Name") if selected_member == "➕ Add New Member..." else selected_member
+
+    update_text = st.sidebar.text_area("Raw Status Update / Work Log")
+
+    if st.sidebar.button("Analyze & Save Update"):
+        if update_text and project_name and developer_name:
             prompt = f"""
-            Analyze the following project update and return ONLY a valid JSON object:
-            {{
-                "summary": "1-sentence concise summary",
-                "status": "On Track" or "At Risk" or "Blocked",
-                "risk_score": integer between 1 and 10,
-                "blockers": "Specific blocker or None"
-            }}
-
+            Analyze this update and return ONLY a JSON object:
+            {{"summary": "1-sentence summary", "status": "On Track", "risk_score": 1, "blockers": "None"}}
             Update text: "{update_text}"
             """
-            with st.spinner("AI is analyzing status..."):
+            with st.spinner("AI analyzing update..."):
                 try:
-                    response = model.generate_content(prompt)
-                    clean_json = response.text.strip().replace("```json", "").replace("```", "").strip()
-                    parsed = json.loads(clean_json)
-
-                    st.session_state.tasks.append({
-                        "Project": project_name,
-                        "Member": developer_name,
-                        "Summary": parsed.get("summary", "N/A"),
-                        "Status": parsed.get("status", "On Track"),
-                        "Risk Score": int(parsed.get("risk_score", 1)),
-                        "Blockers": parsed.get("blockers", "None"),
-                        "Raw Update": update_text
-                    })
-                    st.sidebar.success("Update analyzed and logged!")
+                    res = model.generate_content(prompt)
+                    parsed = json.loads(res.text.strip().replace("```json", "").replace("```", "").strip())
+                    add_data(project_name, developer_name, parsed.get("summary", "N/A"), 
+                             parsed.get("status", "On Track"), int(parsed.get("risk_score", 1)), 
+                             parsed.get("blockers", "None"), update_text)
+                    st.sidebar.success("Saved to database!")
+                    st.rerun()
                 except Exception as e:
-                    st.sidebar.error(f"Parsing error: {e}")
+                    st.sidebar.error(f"Error parsing AI response: {e}")
         else:
-            st.sidebar.warning("Please fill in both Project Name and Update text.")
+            st.sidebar.warning("Ensure Project, Member, and Update text are filled out.")
 
-    # Metrics Dashboard
-    df = pd.DataFrame(st.session_state.tasks)
+    st.sidebar.divider()
 
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total Updates", len(df))
-    col2.metric("Blocked Tasks", len(df[df["Status"] == "Blocked"]))
-    col3.metric("At Risk Tasks", len(df[df["Status"] == "At Risk"]))
-    col4.metric("Avg Risk Score", round(df["Risk Score"].mean(), 1))
+    # --- SIDEBAR: BULK MEETING INGESTION ---
+    st.sidebar.header("🎙️ Bulk Meeting Ingest")
+    transcript_text = st.sidebar.text_area("Paste Zoom/Meeting Transcript:", height=150)
+    if st.sidebar.button("Extract All Updates"):
+        if transcript_text:
+            prompt = f"""
+            Extract EVERY project update from this transcript. Return ONLY a valid JSON ARRAY of objects.
+            Format: [{{"project": "Name", "member": "Name", "summary": "...", "status": "On Track", "risk_score": 1, "blockers": "None"}}]
+            Transcript: "{transcript_text}"
+            """
+            with st.spinner("AI mapping meeting notes..."):
+                try:
+                    res = model.generate_content(prompt)
+                    parsed_array = json.loads(res.text.strip().replace("```json", "").replace("```", "").strip())
+                    for item in parsed_array:
+                        add_data(item.get("project", "Unknown"), item.get("member", "Unknown"), 
+                                 item.get("summary", ""), item.get("status", "On Track"), 
+                                 int(item.get("risk_score", 1)), item.get("blockers", "None"), transcript_text)
+                    st.sidebar.success(f"Ingested {len(parsed_array)} updates!")
+                    st.rerun()
+                except Exception:
+                    st.sidebar.error("Parsing error. Try a clearer transcript.")
 
-    st.divider()
+    # --- MAIN DASHBOARD INTERFACE ---
+    if not df.empty:
+        tab1, tab2, tab3 = st.tabs(["📋 Database & AI Agent", "📊 Visual Analytics", "🕸️ Risk Mapping"])
 
-    # Data Table
-    st.subheader("📋 Active Project Activity Log")
-    st.dataframe(
-        df[["Project", "Member", "Status", "Risk Score", "Blockers", "Summary"]],
-        use_container_width=True
-    )
+        with tab1:
+            st.subheader("Interactive Activity Database")
+            st.write("Edit cells directly to update the database, or click the ❌ Checkbox to delete a row.")
+            
+            # Display Table
+            edited_df = st.data_editor(df, hide_index=True, disabled=["id"], use_container_width=True)
 
-    st.divider()
+            # Detect Changes (Edits or Deletions)
+            if not df.equals(edited_df):
+                for index, old_row in df.iterrows():
+                    new_row = edited_df.iloc[index]
+                    
+                    # 1. Did the user click the Delete checkbox?
+                    if new_row["❌ Delete"] == True:
+                        delete_db_record(new_row['id'])
+                        st.success(f"🗑️ Deleted {new_row['project']} task from database!")
+                        st.rerun()
+                    
+                    # 2. Did the user edit a cell?
+                    for col in df.columns:
+                        if col != "❌ Delete" and old_row[col] != new_row[col]:
+                            update_db_record(new_row['id'], col, new_row[col])
+                            st.success("⚡ Database instantly updated!")
+                            st.rerun()
+            
+            st.divider()
+            
+            # --- AI AGENT SECTION ---
+            st.subheader("🤖 Agentic Command Center: Chat, Update, & Delete")
+            st.markdown("""
+            **This AI acts as an autonomous database administrator.** 
+            You can ask it questions, OR command it to Update/Delete records.
+            *(Examples: "Update Alex's status to At Risk" | "Delete the Payment Gateway task")*
+            """)
+            
+            user_query = st.text_input("Issue a command or ask a question:")
+            if user_query:
+                context = df.to_json(orient="records")
+                agent_prompt = f"""
+                You are an Agentic AI with direct access to this SQL database: {context}
+                User Input: "{user_query}"
+                
+                Decide if the user wants to UPDATE, DELETE, or QUERY the database. Return ONLY JSON:
+                Update format: {{"intent": "update", "project_id": 1, "column_to_update": "status", "new_value": "At Risk", "response": "I updated the status."}}
+                Delete format: {{"intent": "delete", "project_id": 1, "response": "I deleted the task."}}
+                Query format: {{"intent": "query", "response": "Your conversational answer here."}}
+                """
+                with st.spinner("AI Agent processing request..."):
+                    try:
+                        res = model.generate_content(agent_prompt)
+                        ai_decision = json.loads(res.text.strip().replace("```json", "").replace("```", "").strip())
+                        
+                        # Execute the AI's Decision
+                        if ai_decision.get("intent") == "update":
+                            update_db_record(ai_decision["project_id"], ai_decision["column_to_update"], ai_decision["new_value"])
+                            st.success(f"⚡ ACTION EXECUTED: {ai_decision['response']}")
+                            st.rerun()
+                        elif ai_decision.get("intent") == "delete":
+                            delete_db_record(ai_decision["project_id"])
+                            st.success(f"🗑️ ACTION EXECUTED: {ai_decision['response']}")
+                            st.rerun()
+                        else:
+                            st.info(f"💡 {ai_decision.get('response')}")
+                    except:
+                        st.error("Command could not be processed perfectly. Please rephrase.")
 
-    # AI Q&A Assistant
-    st.subheader("🤖 Ask AI Assistant About Projects")
-    user_query = st.text_input("Ask a question (e.g., 'Which tasks are blocked right now?'):")
+        with tab2:
+            st.subheader("📊 Executive Analytics Dashboard")
+            col1, col2 = st.columns(2)
+            with col1:
+                status_counts = df["status"].value_counts().reset_index()
+                status_counts.columns = ["Status", "Count"]
+                fig_pie = px.pie(status_counts, values="Count", names="Status", title="Portfolio Status Distribution", 
+                                 color="Status", color_discrete_map={"On Track":"#00CC96", "At Risk":"#FFA15A", "Blocked":"#EF553B"})
+                st.plotly_chart(fig_pie, use_container_width=True)
+            with col2:
+                fig_bar = px.bar(df, x="project", y="risk_score", color="status", title="Risk Score by Project",
+                                 color_discrete_map={"On Track":"#00CC96", "At Risk":"#FFA15A", "Blocked":"#EF553B"})
+                st.plotly_chart(fig_bar, use_container_width=True)
 
-    if user_query:
-        context = json.dumps(st.session_state.tasks)
-        qa_prompt = f"""
-        You are an enterprise AI project manager.
-        Answer the user's question clearly based ONLY on this dataset:
-        {context}
+        with tab3:
+            st.subheader("🕸️ AI Dependency Mapper & Root Cause Analysis")
+            if st.button("Run Deep Enterprise Analysis"):
+                context = df.to_json(orient="records")
+                analysis_prompt = f"""
+                You are a Senior TPM. Analyze this portfolio data: {context}
+                Identify:
+                1. Systemic Bottlenecks (Are multiple tasks blocked by similar issues?)
+                2. Hidden Dependencies (If task A fails, is task B at risk?)
+                3. Immediate Action Items for the CTO.
+                """
+                with st.spinner("AI is reasoning through cross-project dependencies..."):
+                    analysis = model.generate_content(analysis_prompt)
+                    st.markdown(analysis.text)
 
-        Question: {user_query}
-        """
-        with st.spinner("Analyzing project data..."):
-            answer = model.generate_content(qa_prompt)
-            st.info(answer.text)
-
-else:
-    st.warning("Please configure your Gemini API key in Streamlit Secrets or enter it in the sidebar.")
+    else:
+        st.info("Database empty. Add a new update via the sidebar to initialize your workspace.")
