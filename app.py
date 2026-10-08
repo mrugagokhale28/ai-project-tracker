@@ -173,9 +173,9 @@ if api_key:
             
             st.subheader("🤖 Agentic Command Center: Chat & Update")
             st.markdown("""
-            **This AI acts as an autonomous database administrator.** 
+            **This AI acts as an autonomous project administrator.** 
             You can ask it questions, OR command it to Update records.
-            *(Examples: "Update Alex's status to At Risk" | "Change the Payment Gateway risk score to 8")*
+            *(Examples: "Which project needs urgent attention?" | "Change the Payment Gateway risk score to 8")*
             """)
             
             user_query = st.text_input("Issue a command or ask a question:")
